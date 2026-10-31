@@ -1,5 +1,7 @@
 # Builds the public (distribution) APKs and publishes them as a GitHub release.
-# Runs on a version tag (`v0.7.7`) or by hand from the Actions tab.
+# Runs when a push changes the app version (packaging/android/build.gradle), on a
+# version tag (`v0.7.7`), or by hand from the Actions tab. The release tag is
+# `v<versionName>` unless one is given.
 #
 # Signing: set the repository secret ANDROID_KEYSTORE_BASE64 (a base64 keystore
 # whose store and key password are `android` and whose alias is `androiddebugkey`,
@@ -10,6 +12,8 @@ name: Android release
 on:
   push:
     tags: ['v*']
+    branches: ['**']
+    paths: ['packaging/android/build.gradle', '.github/workflows/android-release.yml']
   workflow_dispatch:
     inputs:
       tag:
@@ -36,12 +40,18 @@ jobs:
       HORIZON_NO_AUDIO: "1"
       HORIZON_LAUNCHER_NO_SELF_UPDATE: "1"
       CARGO_TERM_COLOR: always
-      TAG: ${{ inputs.tag || github.ref_name }}
+      TAG_INPUT: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name || '') }}
       ABIS: ${{ inputs.abis || 'arm64-v8a armeabi-v7a' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+
+      - name: Release tag
+        run: |
+          version=$(sed -n "s/^ *versionName '\(.*\)'/\1/p" packaging/android/build.gradle)
+          echo "TAG=${TAG_INPUT:-v$version}" >> "$GITHUB_ENV"
+          echo "versionName $version"
 
       - name: Free disk space
         run: |

@@ -14,7 +14,8 @@
 ## Releases
 
 `.github/workflows/android-release.yml` builds the public APKs (`arm64-v8a`,
-`armeabi-v7a`) on a `v*` tag or by hand, and attaches them with `SHA256SUMS.txt`,
+`armeabi-v7a`) when a push changes `versionName` in `packaging/android/build.gradle`
+(release `v<versionName>`), on a `v*` tag, or by hand, and attaches them with `SHA256SUMS.txt`,
 `LICENSE.txt` and `THIRD_PARTY_NOTICES.md` to a GitHub release. Set the
 `ANDROID_KEYSTORE_BASE64` secret to keep one signing certificate across releases.
 
