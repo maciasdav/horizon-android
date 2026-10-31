@@ -1,0 +1,146 @@
+# Builds the public (distribution) APKs and publishes them as a GitHub release.
+# Runs on a version tag (`v0.7.7`) or by hand from the Actions tab.
+#
+# Signing: set the repository secret ANDROID_KEYSTORE_BASE64 (a base64 keystore
+# whose store and key password are `android` and whose alias is `androiddebugkey`,
+# as packaging/android/build.gradle expects) to keep the same certificate across
+# releases so phones can update in place. Without it the job signs with a fresh
+# throwaway key and says so in the release notes.
+name: Android release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to create or update (for example v0.7.7)
+        required: true
+      abis:
+        description: Space-separated ABIs
+        default: arm64-v8a armeabi-v7a
+      prerelease:
+        description: Mark as pre-release
+        type: boolean
+        default: false
+permissions:
+  contents: write
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      HORIZON_TELEMETRY_URL: "off"
+      HORIZON_NO_AUDIO: "1"
+      HORIZON_LAUNCHER_NO_SELF_UPDATE: "1"
+      CARGO_TERM_COLOR: always
+      TAG: ${{ inputs.tag || github.ref_name }}
+      ABIS: ${{ inputs.abis || 'arm64-v8a armeabi-v7a' }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /usr/local/lib/node_modules || true
+          df -h .
+
+      - name: Source checks
+        run: |
+          python3 tools/check_public_tree.py
+          python3 -m unittest discover -s tests -p 'test_android*.py'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            25
+            17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14'
+
+      - name: Install Android and Rust toolchains
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;28.2.13676358" "build-tools;35.0.0" "platforms;android-35"
+          rustup show active-toolchain || rustup toolchain install
+          for abi in $ABIS; do
+            case "$abi" in
+              arm64-v8a) rustup target add aarch64-linux-android ;;
+              armeabi-v7a) rustup target add armv7-linux-androideabi ;;
+              x86) rustup target add i686-linux-android ;;
+              x86_64) rustup target add x86_64-linux-android ;;
+              *) echo "Unknown ABI $abi"; exit 1 ;;
+            esac
+          done
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: android-release
+
+      - name: Prepare generated engine tables
+        run: python3 tools/android_prepare.py --java-home "$JAVA_HOME_25_X64"
+
+      - name: Install signing key
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p .local/android
+          if [ -n "$KEYSTORE" ]; then
+            echo "$KEYSTORE" | base64 -d > .local/android/debug.keystore
+            echo "SIGNING=persistent" >> "$GITHUB_ENV"
+          else
+            echo "::warning::ANDROID_KEYSTORE_BASE64 is not set; signing with a throwaway key."
+            echo "SIGNING=throwaway" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build public APKs
+        run: |
+          for abi in $ABIS; do
+            python3 tools/android_build.py --abi "$abi" --public \
+              --sdk "$ANDROID_HOME" --java-home "$JAVA_HOME_17_X64" --gradle "$(command -v gradle)"
+          done
+
+      - name: Collect release files
+        run: |
+          mkdir -p dist
+          version="${TAG#v}"
+          for abi in $ABIS; do
+            cp ".local/android/apk/$abi/horizon-android-public.apk" "dist/HorizonAndroid-$version-$abi.apk"
+          done
+          cp LICENSE dist/LICENSE.txt
+          cp THIRD_PARTY_NOTICES.md dist/THIRD_PARTY_NOTICES.md
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+          {
+            echo "Horizon Android $version, built from \`$(git rev-parse --short=12 HEAD)\`."
+            echo
+            echo "### Changes"
+            echo "- Launcher redesigned in a Material 3 Expressive style: navigation rail (landscape) or bottom bar (portrait), rounded cards, a large launch button, Material switches and pixel icons."
+            echo
+            echo "### Files"
+            echo "One APK per ABI (\`arm64-v8a\` for most phones). Minecraft's original resources are not included: the installer downloads them from Mojang on the phone."
+            echo
+            if [ "$SIGNING" = throwaway ]; then
+              echo "> Signed with a throwaway key: uninstall an earlier Horizon Android build before installing this one."
+              echo
+            fi
+            echo '```'
+            cat dist/SHA256SUMS.txt
+            echo '```'
+          } > release-notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Horizon Android ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
+          body_path: release-notes.md
+          prerelease: ${{ inputs.prerelease || contains(env.TAG, '-') }}
+          files: dist/*
