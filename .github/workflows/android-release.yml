@@ -79,7 +79,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libudev-dev
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;28.2.13676358" "build-tools;35.0.0" "platforms;android-35"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;28.2.13676358" "build-tools;35.0.0" "platforms;android-36"
           rustup show active-toolchain || rustup toolchain install
           for abi in $ABIS; do
             case "$abi" in
@@ -132,7 +132,7 @@ jobs:
             echo "Horizon Android $version, built from \`$(git rev-parse --short=12 HEAD)\`."
             echo
             echo "### Changes"
-            echo "- Launcher redesigned in a Material 3 Expressive style: navigation rail (landscape) or bottom bar (portrait), rounded cards, a large launch button, Material switches and pixel icons."
+            echo "- New launcher written in Kotlin and Jetpack Compose (Material 3 Expressive): native Android sizes, Material icons and motion, a navigation rail or bottom bar, and the game in its own process."
             echo
             echo "### Files"
             echo "One APK per ABI (\`arm64-v8a\` for most phones). Minecraft's original resources are not included: the installer downloads them from Mojang on the phone."
